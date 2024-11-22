@@ -64,6 +64,20 @@ async function insertStatusToLog(idConfig, status, note) {
     return;
   }
 }
+async function updateStatusToLog(idConfig, status, note, date) {
+  try {
+    const result = await connection.query`
+      UPDATE file_logs
+      SET status_process = ${status}, note = ${note}
+      WHERE FORMAT(create_at, 'dd-MM-yyyy') = ${date} AND id_file_config = ${idConfig}
+    `;
+    return result.rowsAffected;
+  } catch (err) {
+    console.log(getCurrentDateTime() + " Update data in file_logs failed");
+    await closeConnection();
+    return;
+  }
+}
 // nếu chưa có log hoặc crawl thấy bại thì return true else false
 async function checkLog(idConfig, date) {
   try {
@@ -72,7 +86,8 @@ async function checkLog(idConfig, date) {
     console.log(result.recordset[1]);
     if (
       result.recordset.length === 0 ||
-      result.recordset[1].status_process === "Save data failed"
+      result.recordset[1]?.status_process === "Save data failed" ||
+      result.recordset[1]?.status_process === "Crawling data"
     ) {
       return true;
     }
@@ -90,6 +105,8 @@ async function scrapeData() {
   const config = await queryFileConfig();
   //4.1 Check xem thử đã crawl dữ liệu vào ngày ddmmyy chưa bằng hàm checkLog()
   if (!(await checkLog(config[0].id, getCurrentDate()))) {
+    //4.2 Đóng connect bằng hàm closeConnection()
+    await closeConnection();
     return;
   }
   const soucePathOrigin = config[0].source_path;
@@ -99,8 +116,22 @@ async function scrapeData() {
     config[0].file_name +
     getCurrentDate() +
     config[0].format;
-  //5 Tiến hành crawl dữ liệu
-  //5.1 Check quá trình crawl dữ liệu
+  //5.insert status "Crawling data" bằng hàm insertStatusToLog(..)
+  const rows = await insertStatusToLog(
+    config[0].id,
+    "Crawling data",
+    `Crawling data....`
+  );
+  //5.1 Check quá trình insert
+  if (rows <= 0) {
+    //5.2 Send email thông báo quá trình insert status progess xuống table file_logs thất bại bằng hàm sendEmail()
+    await sendEmail("insert log of failed data crawling process ");
+    //5.3 Đóng connect bằng hàm closeConnection()
+    await closeConnection();
+    return;
+  }
+  //6 Tiến hành crawl dữ liệu
+  //6.1 Check quá trình crawl dữ liệu
   try {
     while (true) {
       const soucePath = soucePathOrigin.replace("{page}", page);
@@ -178,51 +209,18 @@ async function scrapeData() {
       allProducts = [...allProducts, ...productsWithDetails];
       page = page + 20;
     }
-
-    //6 Send email thông báo crawl được bao nhiêu dòng dữ liệu thành công bằng hàm sendEmail(..)
+    //7 Send email thông báo crawl được bao nhiêu dòng dữ liệu thành công bằng hàm sendEmail(..)
     await sendEmail(
       getCurrentDateTime() +
         `${allProducts.length} lines of data have been downloaded"`
     );
-    //7. Insert status "Crawl data successfully" vào table file_logs bằng hàm insertStatusToLog(...)
-    const rowsAffected = await insertStatusToLog(
-      config[0].id,
-      "Crawl data successfully",
-      `${allProducts.length} lines of data have been downloaded"`
-    );
-    //7.1. Check quá trình insert
-    if (rowsAffected <= 0) {
-      // 7.2 Send email thông báo quá trình insert status progess xuống table file_logs thất bại bằng hàm sendEmail()
-      await sendEmail("insert log of failed data crawling process ");
-      //.7.3 Đóng connect bằng hàm closeConnection()
-      await closeConnection();
-    } else {
-      // 8 Send email thông báo quá trình insert status progess xuống table file_logs thành công bằng hàm sendEmail()
-      await sendEmail("insert log of successful data crawling process ");
-      // 9. Tiến hành lưu xuống file có đường dẫn "D:/DataWareHouse/Data/file_name.csv" bằng hàm saveToCsv(...)
-      await saveToCSV(config, allProducts, outputFilePath);
-    }
+    //8 Tiến hành lưu xuống file có đường dẫn "D:/DataWareHouse/Data/file_name.csv" bằng hàm saveToCsv(...)
+    await saveToCSV(config, allProducts, outputFilePath);
   } catch (error) {
-    //5.2 Send email thông báo crawl dữ liệu thất bại bằng hàm sendEmail()
+    //6.2 Send email thông báo crawl dữ liệu thất bại bằng hàm sendEmail()
     await sendEmail("Crawl data failed");
-    //5.3 Insert status "Crawl data failed" vào table file_logs bằng hàm insertStatusToLog()
-    const rowsAffected = await insertStatusToLog(
-      config[0].id,
-      "Crawl data failed",
-      "Crawl data failed"
-    );
-    //5.3.1 Check quá trình insert
-    if (rowsAffected <= 0) {
-      //5.3.2 Send email thông báo quá trình insert status progess xuống table file_logs thất bại bằng hàm sendEmail()
-      await sendEmail("insert log of failed data crawling process ");
-      //5.3.3 Đóng connect bằng hàm closeConnection()
-      await closeConnection();
-    } else {
-      //5.4 Send email thông báo quá trình insert status progess xuống table file_logs thành công bằng hàm sendEmail()
-      await sendEmail("insert log of successful data crawling process ");
-      //5.5 Đóng connect bằng hàm closeConnection()
-      await closeConnection();
-    }
+    //6.3 Đóng connect bằng hàm closeConnection()
+    await closeConnection();
   }
 }
 
@@ -438,51 +436,53 @@ async function getProductDetail(productLink) {
 }
 
 async function saveToCSV(config, data, outputFilePath) {
-  // 9.1. Check quá trình lưu dữ liệu xuống file
+  //8.1. Check quá trình lưu dữ liệu xuống file
   try {
     const json2csvParser = new Parser({ delimiter: ";" });
     const csv = json2csvParser.parse(data);
 
     fs.writeFileSync(outputFilePath, "\uFEFF" + csv, { encoding: "utf8" });
-    // 10 Send email thông báo lưu thành công dữ liệu vào địa chỉ D:\DataWareHouse\Data\Productsdd-mm-yy.csv bằng hàm sendEmail(...)
+    //9 Send email thông báo lưu thành công dữ liệu vào địa chỉ D:\DataWareHouse\Data\Productsdd-mm-yy.csv bằng hàm sendEmail(...)
     await sendEmail(`The data has been saved to the file: ${outputFilePath}`);
-    // 11 Insert status "Save data successfully" vào table file_logs bằng hàm insertStatusToLog(...)
-    const rowsAffected = await insertStatusToLog(
+    //10 Update status "Save data successfully" vào table file_logs bằng hàm updateStatusToLog(...)
+    const rowsAffected = await updateStatusToLog(
       config[0].id,
       "Save data successfully",
-      `The data has been saved to the file: ${outputFilePath}`
+      `The data has been saved to the file: ${outputFilePath}`,
+      getCurrentDate()
     );
-    //11.1 Check quá trình insert
+    //10.1. Check quá trình upadte
     if (rowsAffected <= 0) {
-      //11.2 Send email thông báo quá trình insert status progess xuống table file_logs thất bại bằng hàm sendEmail()
-      await sendEmail("insert log of failed data file saving process");
-      //11.3 Đóng connect bằng hàm closeConnection()
+      //10.2 Send email thông báo quá trình update status progess xuống table file_logs thất bại bằng hàm sendEmail()
+      await sendEmail("update log of failed data file saving process");
+      //10.3 Đóng connect bằng hàm closeConnection()
       await closeConnection();
     } else {
-      //12 Send email thông báo quá trình insert status progess xuống table file_logs thành công bằng hàm sendEmail()
-      await sendEmail("insert log of successful data file saving process");
-      //13 Đóng connect bằng hàm closeConnection()
+      //11 Send email thông báo quá trình update status progess xuống table file_logs thành công bằng hàm sendEmail()
+      await sendEmail("update log of successful data file saving process");
+      //12 Đóng connect bằng hàm closeConnection()
       await closeConnection();
     }
   } catch (error) {
-    //9.2 Send email thông báo lưu dữ liệu thất bại bằng hàm sendEmail(...)
+    //8.2 Send email thông báo lưu dữ liệu thất bại bằng hàm sendEmail(...)
     await sendEmail(`Saving data to file ${outputFilePath} failed`);
-    //9.3 Insert status "Save data failed" vào table file_logs bằng hàm insertStatusToLog()
-    const rowsAffected = await insertStatusToLog(
+    //8.3 update status "Save data failed" vào table file_logs bằng hàm updateStatusToLog();
+    const rowsAffected = await updateStatusToLog(
       config[0].id,
       "Save data failed",
-      "Save data failed"
+      `The data has been saved to the file: ${outputFilePath}`,
+      getCurrentDate()
     );
-    //9.3.1 Check quá trình insert
+    //8.3.1 Check quá trình update
     if (rowsAffected <= 0) {
-      //9.3.2 Send email thông báo quá trình insert status progess xuống table file_logs thất bại bằng hàm sendEmail()
+      //8.3.2 Send email thông báo quá trình update status progess xuống table file_logs thất bại bằng hàm sendEmail()
       await sendEmail("insert log of failed data file saving process");
-      //9.3.3 Đóng connect bằng hàm closeConnection()
+      //8.3.3 Đóng connect bằng hàm closeConnection()
       await closeConnection();
     } else {
-      //9.4 Send email thông báo quá trình insert status progess xuống table file_logs thành công bằng hàm sendEmail()
+      //8.4 Send email thông báo quá trình update status progess xuống table file_logs thành công bằng hàm sendEmail()
       await sendEmail("insert log of successful data file saving process");
-      //9.5 Đóng connect bằng hàm closeConnection()
+      //8.5 Đóng connect bằng hàm closeConnection()
       await closeConnection();
     }
   }
