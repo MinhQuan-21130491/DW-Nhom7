@@ -1,0 +1,6 @@
+.contain {
+    display: flex;
+    flex-wrap: wrap; /* Cho phép wrap xuống dòng */
+    justify-content: center; /* Căn giữa các sản phẩm */
+    gap: 16px; /* Khoảng cách giữa các sản phẩm */
+  }
