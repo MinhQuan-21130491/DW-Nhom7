@@ -1,0 +1,6 @@
+{
+    "flag": "ready",
+    "stagingDbUrl": "jdbc:sqlite:staging.db",
+    "warehouseDbUrl": "jdbc:sqlite:warehouse.db"
+  }
+  
