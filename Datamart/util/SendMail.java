@@ -25,7 +25,7 @@ import java.util.Properties;
  * - To send an email with an attachment:
  *   MailService.sendMail(to, subject, content, filePath);
  *
- * The email configuration (email address and password) is read from the "config.properties" file.
+ * The email configuration (email address and password) is read from the "config.env" file.
  * The properties file should contain the following keys:
  * - email_service: The email address used for sending emails.
  * - password_mail_service: The password associated with the email address.
@@ -45,7 +45,7 @@ public class SendMail {
     private static String password;
 
     /**
-     * Initializes the email and password fields by loading them from the "config.properties" file.
+     * Initializes the email and password fields by loading them from the "config.env" file.
      */
     static{
         Properties properties = new Properties();
